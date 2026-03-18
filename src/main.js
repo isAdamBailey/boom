@@ -1,14 +1,20 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 
-const gtmId = import.meta.env.VITE_GTM_ID
-if (/^GTM-[A-Z0-9]+$/i.test(gtmId || '')) {
+const GA_MEASUREMENT_ID = 'G-20FJRY7NR2'
+
+if (import.meta.env.PROD) {
   window.dataLayer = window.dataLayer || []
-  window.dataLayer.push({ event: 'gtm_loaded' })
-  const gtmScript = document.createElement('script')
-  gtmScript.async = true
-  gtmScript.src = `https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(gtmId)}`
-  document.head.appendChild(gtmScript)
+  window.gtag = function gtag() {
+    window.dataLayer.push(arguments)
+  }
+  window.gtag('js', new Date())
+  window.gtag('config', GA_MEASUREMENT_ID)
+
+  const gaScript = document.createElement('script')
+  gaScript.async = true
+  gaScript.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(GA_MEASUREMENT_ID)}`
+  document.head.appendChild(gaScript)
 }
 
 createApp(App).mount('#app')
