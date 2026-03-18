@@ -41,6 +41,13 @@ const gameW = ref(600)
 const gameH = ref(600)
 
 const gameEl = ref(null)
+const runStartedAt = ref(0)
+
+function trackEvent(event, payload = {}) {
+  if (typeof window === 'undefined') return
+  window.dataLayer = window.dataLayer || []
+  window.dataLayer.push({ event, ...payload })
+}
 
 // ─── computed styles ─────────────────────────────────────────────────────────
 const toiletStyle = computed(() => ({
@@ -78,6 +85,11 @@ function handleHit() {
   isPoopFalling.value = false
   poopVisible.value   = false
   score.value++
+  trackEvent('game_win', {
+    score: score.value,
+    misses: misses.value,
+    run_time_ms: Date.now() - runStartedAt.value,
+  })
   splashX.value = toiletX.value
   splashY.value = gameH.value - TOILET_BOTTOM - TOILET_H
   showSplash.value = true
@@ -95,6 +107,11 @@ function handleMiss() {
   isPoopFalling.value = false
   poopVisible.value   = false
   misses.value++
+  trackEvent('game_miss', {
+    score: score.value,
+    misses: misses.value,
+    run_time_ms: Date.now() - runStartedAt.value,
+  })
   missX.value = poopX.value
   missY.value = Math.min(poopY.value, gameH.value - 60)
   showMiss.value = true
@@ -104,6 +121,11 @@ function handleMiss() {
     if (misses.value >= MAX_MISSES) {
       gameOver.value = true
       cancelAnimationFrame(rafId)
+      trackEvent('game_lose', {
+        score: score.value,
+        misses: misses.value,
+        run_time_ms: Date.now() - runStartedAt.value,
+      })
     } else {
       resetPoop()
       queueNextTick()
@@ -327,17 +349,25 @@ function updateSize() {
 
 function startGame() {
   gameStarted.value = true
+  runStartedAt.value = Date.now()
+  trackEvent('game_start')
   resetPoop()
   toiletX.value = gameW.value / 2
   queueNextTick()
 }
 
 function restartGame() {
+  trackEvent('game_restart', {
+    score: score.value,
+    misses: misses.value,
+    run_time_ms: Date.now() - runStartedAt.value,
+  })
   cancelAnimationFrame(rafId)
   score.value   = 0
   misses.value  = 0
   gameOver.value = false
   toiletDir = 1
+  runStartedAt.value = Date.now()
   playGameOverSound()
   resetPoop()
   toiletX.value = gameW.value / 2
@@ -435,6 +465,10 @@ onUnmounted(() => {
       <div class="floor"></div>
 
     </div>
+
+    <footer class="game-footer">
+      <a href="https://adambailey.io" target="_blank" rel="noopener noreferrer">&copy; Adam Bailey</a>
+    </footer>
   </div>
 </template>
 
@@ -455,16 +489,19 @@ body {
 /* ── layout ─────────────────────────────────────────── */
 .game-wrapper {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100vw;
   height: 100dvh;
+  gap: 8px;
+  padding: 24px 24px 20px;
 }
 
 .game-container {
   position: relative;
   width: min(100vw, 700px);
-  height: min(100dvh, 700px);
+  height: min(calc(100dvh - 120px), 700px);
   overflow: hidden;
   border-radius: 16px;
   background-color: #efe6d6;
@@ -579,6 +616,24 @@ body {
     ),
     linear-gradient(#c8b59a, #9f896e);
   border-top: 3px solid #81684b;
+}
+
+.game-footer {
+  margin-top: auto;
+  padding: 0;
+  text-align: center;
+  font-size: 0.68rem;
+}
+
+.game-footer a {
+  color: #f4e9d7;
+  text-decoration: none;
+  font-weight: 500;
+  opacity: 0.95;
+}
+
+.game-footer a:hover {
+  text-decoration: underline;
 }
 
 /* ── splash ──────────────────────────────────────────── */
