@@ -45,6 +45,10 @@ const runStartedAt = ref(0)
 
 function trackEvent(event, payload = {}) {
   if (typeof window === 'undefined') return
+  if (typeof window.gtag === 'function') {
+    window.gtag('event', event, payload)
+    return
+  }
   window.dataLayer = window.dataLayer || []
   window.dataLayer.push({ event, ...payload })
 }
