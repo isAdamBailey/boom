@@ -27,7 +27,6 @@ const poopVelY  = ref(0)
 const isDragging     = ref(false)
 const isPoopFalling  = ref(false)
 const poopVisible    = ref(true)
-const poopDropped    = ref(false)   // briefly true while splash shown
 
 // effects
 const showSplash = ref(false)
@@ -71,7 +70,6 @@ function resetPoop() {
   poopX.value    = gameW.value / 2
   poopY.value    = 120
   poopVelY.value = 0
-  poopDropped.value  = false
   poopVisible.value  = true
   isPoopFalling.value = false
 }
@@ -83,10 +81,13 @@ function handleHit() {
   splashX.value = toiletX.value
   splashY.value = gameH.value - TOILET_BOTTOM - TOILET_H
   showSplash.value = true
-  playSplashSound()
+  playHitSound()
   setTimeout(() => {
     showSplash.value = false
-    if (!gameOver.value) resetPoop()
+    if (!gameOver.value) {
+      resetPoop()
+      queueNextTick()
+    }
   }, 1200)
 }
 
@@ -105,12 +106,18 @@ function handleMiss() {
       cancelAnimationFrame(rafId)
     } else {
       resetPoop()
+      queueNextTick()
     }
   }, 1200)
 }
 
 // ─── game loop ────────────────────────────────────────────────────────────────
 let rafId = null
+function queueNextTick() {
+  if (!gameOver.value) {
+    rafId = requestAnimationFrame(tick)
+  }
+}
 
 function tick() {
   // Move toilet
@@ -146,7 +153,7 @@ function tick() {
     }
   }
 
-  rafId = requestAnimationFrame(tick)
+  queueNextTick()
 }
 
 // ─── drag handling ────────────────────────────────────────────────────────────
@@ -194,29 +201,78 @@ function makeCtx() {
   return new (window.AudioContext || window.webkitAudioContext)()
 }
 
-function playSplashSound() {
+const fartSound = new Audio(`${import.meta.env.BASE_URL}fart.mp3`)
+fartSound.preload = 'auto'
+fartSound.volume = 0.9
+let fartSoundReady = false
+fartSound.addEventListener('canplaythrough', () => {
+  fartSoundReady = true
+})
+fartSound.addEventListener('error', () => {
+  fartSoundReady = false
+})
+
+function playHitSound() {
+  if (!fartSoundReady) {
+    playSynthFartSound()
+    return
+  }
+  const sound = fartSound.cloneNode()
+  sound.volume = fartSound.volume
+  sound.play().catch(() => {
+    playSynthFartSound()
+  })
+}
+
+function playSynthFartSound() {
   try {
-    const ctx   = makeCtx()
-    const sr    = ctx.sampleRate
-    const len   = Math.floor(sr * 0.55)
-    const buf   = ctx.createBuffer(1, len, sr)
-    const data  = buf.getChannelData(0)
+    const ctx = makeCtx()
+    const now = ctx.currentTime
+
+    const osc = ctx.createOscillator()
+    const oscFilter = ctx.createBiquadFilter()
+    const oscGain = ctx.createGain()
+    osc.type = 'sawtooth'
+    osc.frequency.setValueAtTime(220, now)
+    osc.frequency.exponentialRampToValueAtTime(45, now + 0.25)
+    oscFilter.type = 'lowpass'
+    oscFilter.frequency.setValueAtTime(900, now)
+    oscFilter.frequency.exponentialRampToValueAtTime(180, now + 0.25)
+    oscGain.gain.setValueAtTime(0.22, now)
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.28)
+
+    const sr = ctx.sampleRate
+    const len = Math.floor(sr * 0.3)
+    const buf = ctx.createBuffer(1, len, sr)
+    const data = buf.getChannelData(0)
     for (let i = 0; i < len; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.25))
+      const t = i / len
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2)
     }
-    const src    = ctx.createBufferSource()
-    src.buffer   = buf
-    const lp     = ctx.createBiquadFilter()
-    lp.type      = 'lowpass'
-    lp.frequency.value = 1200
-    const gain   = ctx.createGain()
-    gain.gain.setValueAtTime(1, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55)
-    src.connect(lp)
-    lp.connect(gain)
-    gain.connect(ctx.destination)
-    src.start()
-    setTimeout(() => ctx.close(), 1500)
+    const noise = ctx.createBufferSource()
+    const noiseFilter = ctx.createBiquadFilter()
+    const noiseGain = ctx.createGain()
+    noise.buffer = buf
+    noiseFilter.type = 'bandpass'
+    noiseFilter.frequency.setValueAtTime(420, now)
+    noiseFilter.Q.value = 0.7
+    noiseGain.gain.setValueAtTime(0.14, now)
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.2)
+
+    osc.connect(oscFilter)
+    oscFilter.connect(oscGain)
+    oscGain.connect(ctx.destination)
+
+    noise.connect(noiseFilter)
+    noiseFilter.connect(noiseGain)
+    noiseGain.connect(ctx.destination)
+
+    osc.start(now)
+    osc.stop(now + 0.28)
+    noise.start(now)
+    noise.stop(now + 0.22)
+
+    setTimeout(() => ctx.close(), 1000)
   } catch (_) { /* silently ignore */ }
 }
 
@@ -273,7 +329,7 @@ function startGame() {
   gameStarted.value = true
   resetPoop()
   toiletX.value = gameW.value / 2
-  rafId = requestAnimationFrame(tick)
+  queueNextTick()
 }
 
 function restartGame() {
@@ -282,10 +338,10 @@ function restartGame() {
   misses.value  = 0
   gameOver.value = false
   toiletDir = 1
-  playGameOverSound()  // same descending melody works for game-over on restart too
+  playGameOverSound()
   resetPoop()
   toiletX.value = gameW.value / 2
-  rafId = requestAnimationFrame(tick)
+  queueNextTick()
 }
 
 onMounted(() => {
@@ -386,7 +442,10 @@ onUnmounted(() => {
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: #1a1a2e;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(255, 245, 224, 0.2), transparent 35%),
+    radial-gradient(circle at 85% 80%, rgba(96, 70, 42, 0.25), transparent 45%),
+    linear-gradient(145deg, #2f2318, #1e160f);
   font-family: 'Segoe UI', system-ui, sans-serif;
   overflow: hidden;
 }
@@ -408,14 +467,15 @@ body {
   height: min(100dvh, 700px);
   overflow: hidden;
   border-radius: 16px;
-  /* bathroom tile background */
-  background-color: #d6eef8;
+  background-color: #efe6d6;
   background-image:
-    linear-gradient(rgba(255,255,255,.35) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.35) 1px, transparent 1px);
-  background-size: 60px 60px;
+    linear-gradient(rgba(125, 102, 76, 0.24) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 102, 76, 0.24) 1px, transparent 1px),
+    radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.38), transparent 32%),
+    radial-gradient(circle at 80% 85%, rgba(96, 70, 42, 0.1), transparent 42%);
+  background-size: 56px 56px, 56px 56px, 100% 100%, 100% 100%;
   box-shadow: 0 0 60px rgba(0,0,0,.6);
-  border: 3px solid #b0ccd8;
+  border: 3px solid #9d8263;
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
@@ -429,11 +489,12 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 10px 18px;
-  background: rgba(0,60,100,.55);
+  background: rgba(63, 45, 28, 0.72);
   backdrop-filter: blur(6px);
-  color: #fff;
+  color: #fff5e7;
   font-weight: 700;
   z-index: 10;
+  border-bottom: 2px solid rgba(188, 155, 113, 0.7);
 }
 
 .hud-label {
@@ -453,7 +514,7 @@ body {
 
 .hud-instruction {
   font-size: .75rem;
-  opacity: .85;
+  color: #e6d4bb;
   text-align: center;
 }
 
@@ -473,7 +534,7 @@ body {
 }
 
 .poop:not(.falling):not(.dragging):hover {
-  filter: drop-shadow(0 0 12px rgba(255,200,50,.9)) !important;
+  filter: drop-shadow(0 0 12px rgba(145, 112, 55, 0.95)) !important;
   transform: scale(1.08);
 }
 
@@ -502,7 +563,7 @@ body {
 .toilet-emoji {
   font-size: 80px;
   line-height: 1;
-  filter: drop-shadow(0 4px 6px rgba(0,0,0,.35));
+  filter: drop-shadow(0 4px 6px rgba(30, 20, 12, 0.45));
 }
 
 /* ── floor ───────────────────────────────────────────── */
@@ -510,8 +571,14 @@ body {
   position: absolute;
   bottom: 0; left: 0; right: 0;
   height: 24px;
-  background: linear-gradient(#b8d8e8, #a0c4d4);
-  border-top: 3px solid #7aabbd;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #b6a085 0 28px,
+      #a88f71 28px 30px
+    ),
+    linear-gradient(#c8b59a, #9f896e);
+  border-top: 3px solid #81684b;
 }
 
 /* ── splash ──────────────────────────────────────────── */
@@ -533,8 +600,8 @@ body {
   text-align: center;
   font-weight: 900;
   font-size: 1.5rem;
-  color: #0af;
-  text-shadow: 0 0 8px #0af;
+  color: #8f6a34;
+  text-shadow: 0 0 8px rgba(143, 106, 52, 0.75);
 }
 
 /* ── miss ────────────────────────────────────────────── */
@@ -561,18 +628,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0,0,0,.55);
+  background: rgba(34, 23, 14, 0.6);
   backdrop-filter: blur(4px);
   z-index: 50;
 }
 
 .overlay-card {
-  background: rgba(255,255,255,.15);
-  border: 2px solid rgba(255,255,255,.3);
+  background: rgba(112, 88, 58, 0.36);
+  border: 2px solid rgba(236, 208, 171, 0.4);
   border-radius: 20px;
   padding: 36px 44px;
   text-align: center;
-  color: #fff;
+  color: #fff7eb;
   backdrop-filter: blur(8px);
 }
 
@@ -588,12 +655,12 @@ body {
   border: none;
   border-radius: 50px;
   cursor: pointer;
-  background: linear-gradient(135deg, #0af, #06f);
-  color: #fff;
-  box-shadow: 0 4px 20px rgba(0,160,255,.5);
+  background: linear-gradient(135deg, #8f6a34, #5c4528);
+  color: #fff5e5;
+  box-shadow: 0 4px 20px rgba(92, 69, 40, 0.55);
   transition: transform .1s, box-shadow .1s;
 }
-.btn:hover  { transform: scale(1.05); box-shadow: 0 6px 24px rgba(0,160,255,.7); }
+.btn:hover  { transform: scale(1.05); box-shadow: 0 6px 24px rgba(168, 132, 83, 0.72); }
 .btn:active { transform: scale(.97); }
 
 /* ── transitions ─────────────────────────────────────── */
